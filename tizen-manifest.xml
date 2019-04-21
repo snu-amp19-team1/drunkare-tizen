@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns="http://tizen.org/ns/packages" api-version="4.0" package="com.drunkare" version="1.0.0">
+	<profile name="wearable" />
+	<ui-application appid="com.drunkare" exec="drunkare" type="capp" multiple="false" taskmanage="true" nodisplay="false">
+		<icon>drunkare.png</icon>
+		<label>drunkare</label>
+	</ui-application>
+	<privileges>
+		<privilege>http://tizen.org/privilege/display</privilege>
+		<privilege>http://tizen.org/privilege/externalstorage.appdata</privilege>
+		<privilege>http://tizen.org/privilege/power</privilege>
+	</privileges>
+	<feature name="http://tizen.org/feature/sensor.accelerometer">true</feature>
+	<feature name="http://tizen.org/feature/sensor.accelerometer.wakeup">true</feature>
+	<feature name="http://tizen.org/feature/sensor.gyroscope">true</feature>
+	<feature name="http://tizen.org/feature/sensor.gyroscope.wakeup">true</feature>
+</manifest>
