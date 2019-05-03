@@ -1,9 +1,14 @@
+#include <string>
+#include <curl/curl.h>
+
 #include "drunkare.h"
 
 typedef struct appdata {
 	Evas_Object *win;
 	Evas_Object *conform;
 	Evas_Object *label;
+  Evas_Object *button;
+  std::string response;
 } appdata_s;
 
 static void
@@ -15,9 +20,77 @@ win_delete_request_cb(void *data, Evas_Object *obj, void *event_info)
 static void
 win_back_cb(void *data, Evas_Object *obj, void *event_info)
 {
-	appdata_s *ad = data;
-	/* Let window go to hide state. */
+	appdata_s *ad = (appdata_s *)data;
+        /* Let window go to hide state. */
 	elm_win_lower(ad->win);
+}
+
+// Writes `size * nmenb` bytes to `userp` and return the bytes written.
+// `userp` is expected to be a `std::string` object.
+size_t curl_get_cb(void *response, size_t size, size_t nmenb, void *userp) {
+  ((std::string*)userp)->append((char *)response, size * nmenb);
+
+  return size * nmenb;
+}
+
+static void update_ui(void *data) {
+  appdata_s *ad = (appdata_s *) data;
+  elm_object_text_set(ad->label, ad->response.c_str());
+}
+
+// This is a simple example of initializing and performing curl using
+// `libcurl`. For `POST` requests, refer to this external link.
+//
+//     https://curl.haxx.se/libcurl/c/http-post.html
+//
+static void test_curl(void *data, Evas_Object *obj, void *event_info) {
+  CURL* curl;
+  CURLcode curl_err;
+
+  // Clear `ad->response` before performing curl
+  ((appdata_s *)data)->response.clear();
+
+  curl = curl_easy_init();
+
+  if (curl) {
+    curl_easy_setopt(curl, CURLOPT_URL, "http://www.tizen.org");
+
+    /* Use a GET */
+    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+
+    /* Setup a write callback */
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_get_cb);
+
+    /* Setup a write data */
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &((appdata_s *)data)->response);
+
+    curl_err = curl_easy_perform(curl);
+    if (curl_err != CURLE_OK) {
+      /* Curl failed */
+
+      return;
+    }
+
+    // Gracefully clean up curl object
+    curl_easy_cleanup(curl);
+  }
+
+  if (!((appdata_s *)data)->response.length()) {
+    ((appdata_s *)data)->response = "curl failed";
+  }
+  update_ui(data);
+}
+
+static void
+init_button(appdata_s *ad,
+            void (*cb)(void *data, Evas_Object *obj, void *event_info))
+{
+  ad->button = elm_button_add(ad->win);
+  evas_object_smart_callback_add(ad->button, "clicked", test_curl, ad);
+  evas_object_move(ad->button, 110, 150);
+  evas_object_resize(ad->button, 140, 60);
+  elm_object_text_set(ad->button, "Test");
+  evas_object_show(ad->button);
 }
 
 static void
@@ -56,6 +129,9 @@ create_base_gui(appdata_s *ad)
 	evas_object_size_hint_weight_set(ad->label, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
 	elm_object_content_set(ad->conform, ad->label);
 
+        init_button(ad, test_curl);
+        ad->response = "";
+
 	/* Show window after base gui is set up */
 	evas_object_show(ad->win);
 }
@@ -67,7 +143,7 @@ app_create(void *data)
 		Initialize UI resources and application's data
 		If this function returns true, the main loop of application starts
 		If this function returns false, the application is terminated */
-	appdata_s *ad = data;
+	appdata_s *ad = (appdata_s *)data;
 
 	create_base_gui(ad);
 
