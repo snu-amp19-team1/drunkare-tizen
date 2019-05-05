@@ -1,15 +1,18 @@
 #include <string>
+#include <iostream>
+#include <queue>
 #include <curl/curl.h>
 
 #include "drunkare.h"
+#include "queue.h"
 
-typedef struct appdata {
-	Evas_Object *win;
-	Evas_Object *conform;
-	Evas_Object *label;
+struct appdata_s {
+  Evas_Object *win;
+  Evas_Object *conform;
+  Evas_Object *label;
   Evas_Object *button;
   std::string response;
-} appdata_s;
+};
 
 static void
 win_delete_request_cb(void *data, Evas_Object *obj, void *event_info)
@@ -79,6 +82,9 @@ static void test_curl(void *data, Evas_Object *obj, void *event_info) {
     ((appdata_s *)data)->response = "curl failed";
   }
   update_ui(data);
+}
+
+static void turnOnSensors(void *data, Evas_Object *obj, void *event_info) {
 }
 
 static void
@@ -210,11 +216,28 @@ ui_app_low_memory(app_event_info_h event_info, void *user_data)
 	/*APP_EVENT_LOW_MEMORY*/
 }
 
+struct Foo {
+  int _foo;
+  float _bar;
+
+  Foo(int foo, float bar) : _foo(foo), _bar(bar) {}
+};
+
+std::ostream& operator<<(std::ostream& os, const Foo& foo) {
+  os << "{" << foo._foo << "," << foo._bar << "}";
+  return os;
+}
+
 int
 main(int argc, char *argv[])
 {
 	appdata_s ad = {0,};
 	int ret = 0;
+
+        Queue<Foo> queue;
+        auto foo = std::make_unique<Foo>(3, 4.0);
+        queue.enqueue(std::move(foo));
+        auto bar = queue.dequeue();
 
 	ui_app_lifecycle_callback_s event_callback = {0,};
 	app_event_handler_h handlers[5] = {NULL, };
