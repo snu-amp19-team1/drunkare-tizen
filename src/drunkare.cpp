@@ -37,7 +37,9 @@ struct appdata_s {
   std::thread netWorker; // CURL requests in the background
   Queue<std::vector<uint8_t>> queue;
   std::string hostname;
-  long port; 
+  long port;
+
+  appdata_s() : win(nullptr) {}
 };
 
 static void win_delete_request_cb(void *data, Evas_Object *obj,
@@ -332,7 +334,7 @@ ui_app_low_memory(app_event_info_h event_info, void *user_data)
 int
 main(int argc, char *argv[])
 {
-	appdata_s ad = {0,};
+  appdata_s ad;
 	int ret = 0;
 
 	ui_app_lifecycle_callback_s event_callback = {0,};
