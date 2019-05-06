@@ -1,23 +1,48 @@
 #include <string>
 #include <iostream>
 #include <queue>
+#include <thread>
 #include <curl/curl.h>
+
+// Tizen libraries
+#include <sensor.h>
+#include <efl_util.h>
+#include <device/power.h>
 
 #include "drunkare.h"
 #include "queue.h"
+#include "data.h"
+
+#define NUM_SENSORS 2
+#define NUM_CHANNELS 3
+#define DURATION 60
+#define ACCELEROMETER 0
+#define GYROSCOPE 1
+
+using TMeasure = Measure<NUM_CHANNELS, DURATION>;
 
 struct appdata_s {
   Evas_Object *win;
   Evas_Object *conform;
   Evas_Object *label;
   Evas_Object *button;
-  std::string response;
+  std::string response; // TODO: delete this
+
+  // Extra app data
+  bool _isMeasuring;
+  sensor_h sensors[NUM_SENSORS];
+  sensor_listener_h listners[NUM_SENSORS];
+  int _deviceSamplingRate = 10;
+  std::vector<TMeasure> tMeasures[NUM_SENSORS];
+  std::thread netWorker; // CURL requests in the background
+  Queue<std::vector<uint8_t>> queue;
+  std::string hostname;
+  long port; 
 };
 
-static void
-win_delete_request_cb(void *data, Evas_Object *obj, void *event_info)
-{
-	ui_app_exit();
+static void win_delete_request_cb(void *data, Evas_Object *obj,
+                                  void *event_info) {
+  ui_app_exit();
 }
 
 static void
@@ -46,7 +71,8 @@ static void update_ui(void *data) {
 //
 //     https://curl.haxx.se/libcurl/c/http-post.html
 //
-static void test_curl(void *data, Evas_Object *obj, void *event_info) {
+static void test_curl(void *data, Evas_Object *obj, void *event_info)
+{
   CURL* curl;
   CURLcode curl_err;
 
@@ -84,7 +110,85 @@ static void test_curl(void *data, Evas_Object *obj, void *event_info) {
   update_ui(data);
 }
 
-static void turnOnSensors(void *data, Evas_Object *obj, void *event_info) {
+//
+// Main function for `netWorker`.
+//   1. Dequeue a `Measure` from `ad->queue`
+//   2. Format POST fields
+//   3. Send POST request to <hostname:port>
+//   4. Repeat
+//
+static void netWorkerJob(appdata_s* ad) {
+  while (true) {
+    auto m = ad->queue.dequeue();
+    if (!m)
+      break;
+
+    // TODO!
+  }
+}
+
+void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
+{
+  appdata_s *ad = (appdata_s *)user_data;
+  int sensor_type;
+  sensor_type_e type;
+  sensor_get_type(sensor, &type);
+  std::vector<float> values;
+
+  switch (type) {
+  case SENSOR_ACCELEROMETER:
+    sensor_type = ACCELEROMETER;
+    break;
+  case SENSOR_GYROSCOPE:
+    sensor_type = GYROSCOPE;
+    break;
+  default:
+    return;
+  }
+
+  // TODO: handling measurement finish event
+  if (ad->tMeasures[sensor_type].front()._done)
+    return;
+
+  for (int i = 0; i < NUM_CHANNELS; i++) {
+    values.push_back(event->values[i]);
+  }
+
+  ad->tMeasures[sensor_type].front().tick(values);
+}
+
+static void startMeasurement(appdata_s *ad)
+{
+  // TODO
+  TMeasure m[NUM_SENSORS];
+
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    ad->tMeasures[i].push_back(m[i]);
+
+    sensor_listener_set_event_cb(ad->listners[i], ad->_deviceSamplingRate,
+                                 sensorCb, ad);
+  }
+}
+static void stopMeasurement(appdata_s *ad)
+{
+  // TODO
+
+}
+
+static void btnClickedCb(void *data, Evas_Object *obj, void *event_info)
+{
+  // 1. Set screen always on (This is due to hardware limitation)
+  efl_util_set_window_screen_mode(((appdata_s *)data)->win,
+                                  EFL_UTIL_SCREEN_MODE_ALWAYS_ON);
+
+  // 2. 
+  if (((appdata_s *) data)->_isMeasuring) {
+    startMeasurement((appdata_s *) data /* more arguments? */);
+    // elm_object_text_set(ad->button, "Stop");
+  } else {
+    stopMeasurement((appdata_s *) data /* more arguments? */);
+    // elm_object_text_set(ad->button, "Start");
+  }
 }
 
 static void
@@ -95,7 +199,7 @@ init_button(appdata_s *ad,
   evas_object_smart_callback_add(ad->button, "clicked", test_curl, ad);
   evas_object_move(ad->button, 110, 150);
   evas_object_resize(ad->button, 140, 60);
-  elm_object_text_set(ad->button, "Test");
+  elm_object_text_set(ad->button, "Start");
   evas_object_show(ad->button);
 }
 
@@ -135,10 +239,19 @@ create_base_gui(appdata_s *ad)
 	evas_object_size_hint_weight_set(ad->label, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
 	elm_object_content_set(ad->conform, ad->label);
 
-        init_button(ad, test_curl);
-        ad->response = "";
+        /* Custom initializations are here! */
+        ad->response = ""; // TODO: delete this
+        ad->_isMeasuring = false;
+        ad->hostname = "http://localhost";
+        ad->port = 8000;
+        init_button(ad, btnClickedCb);
+        sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
+        sensor_get_default_sensor(SENSOR_GYROSCOPE, &ad->sensors[GYROSCOPE]);
+        for (int i = 0; i < NUM_SENSORS; i++) {
+          sensor_create_listener(ad->sensors[i], &ad->listners[i]);
+        }
 
-	/* Show window after base gui is set up */
+        /* Show window after base gui is set up */
 	evas_object_show(ad->win);
 }
 
@@ -216,31 +329,32 @@ ui_app_low_memory(app_event_info_h event_info, void *user_data)
 	/*APP_EVENT_LOW_MEMORY*/
 }
 
-struct Foo {
-  int _foo;
-  float _bar;
-
-  Foo(int foo, float bar) : _foo(foo), _bar(bar) {}
-};
-
-std::ostream& operator<<(std::ostream& os, const Foo& foo) {
-  os << "{" << foo._foo << "," << foo._bar << "}";
-  return os;
-}
-
 int
 main(int argc, char *argv[])
 {
 	appdata_s ad = {0,};
 	int ret = 0;
 
-        Queue<Foo> queue;
-        auto foo = std::make_unique<Foo>(3, 4.0);
-        queue.enqueue(std::move(foo));
-        auto bar = queue.dequeue();
-
 	ui_app_lifecycle_callback_s event_callback = {0,};
 	app_event_handler_h handlers[5] = {NULL, };
+
+        bool supported[NUM_SENSORS];
+	sensor_is_supported(SENSOR_ACCELEROMETER, &supported[ACCELEROMETER]);
+	sensor_is_supported(SENSOR_GYROSCOPE, &supported[GYROSCOPE]);
+	if (!supported[ACCELEROMETER] || !supported[GYROSCOPE]) {
+		/* Accelerometer is not supported on the current device */
+		return 1;
+	}
+
+        // Initialize sensor handles
+        // 	sensor_get_default_sensor(SENSOR_ACCELEROMETER, &sensors[ACCELEROMETER]);
+        // 	sensor_get_default_sensor(SENSOR_GYROSCOPE, &sensors[GYROSCOPE]);
+        // 
+        //         // Initialize sensor listeners
+        //         for (int i = 0; i < NUM_SENSORS; i++) {
+        //           sensor_create_listener(sensors[sensor_index],
+        //                                  &listeners[sensor_index]);
+        //         }
 
 	event_callback.create = app_create;
 	event_callback.terminate = app_terminate;
