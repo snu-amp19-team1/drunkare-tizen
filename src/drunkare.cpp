@@ -124,11 +124,46 @@ static void test_curl(void *data, Evas_Object *obj, void *event_info)
 //
 static void netWorkerJob(appdata_s* ad) {
   while (true) {
+	// Get Measure pointer
     auto m = ad->queue.dequeue();
     if (!m)
       break;
 
     // TODO!
+
+    // [TODO] Check the Measure pointer type (accel or gyro)
+
+    // [TODO] JSON formatting
+    std::string jsonObj = "{\"timestamps\":[...],\"accel\":{\"x\":[...],\"y\":[...],\"z\":[...]},\"gyro\":{\"x\":[...],\"y\":[...],\"z\":[...]}}";
+    std::string url = "http://hostname:port";
+
+    /* Curl POST */
+    CURL *curl;
+    CURLcode res;
+
+    curl_global_init(CURL_GLOBAL_ALL);
+    curl = curl_easy_init();
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "charsets: utf-8");
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonObj.c_str());
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcrp/0.1");
+
+    res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        /* Curl failed */
+    	dlog_print(DLOG_ERROR, LOG_TAG, "netWorkerJob() is failed. err = %d", res);
+        //return;
+    }
+
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
   }
 }
 
