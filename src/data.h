@@ -1,4 +1,6 @@
 #include <vector>
+#include <iostream>
+#include <sstream>
 #include <string>
 
 //
@@ -14,12 +16,13 @@ struct Measure {
   constexpr std::size_t _duration() { return D; }
 
   int _id;
+  int _type;
   size_t _tick, _nextIdx; // tick: deviceSamplingPeriod, nextIdx: samplingPeriod
   bool _done;
   float data[C][D * 1000 / _samplingPeriod];
 
-  // TODO: assign id
-  Measure() : _id(0), _tick(0), _nextIdx(0), _done(false) {}
+  Measure(int id, int type)
+    : _id(id), _type(type), _tick(0), _nextIdx(0), _done(false) {}
 
   constexpr size_t _size() {
     return 4 + C * D * 1000 / _samplingPeriod;
@@ -30,9 +33,11 @@ struct Measure {
     return _nextIdx;
   }
 
-  std::vector<uint8_t> format()
+  std::string format()
   {
-    return std::vector<uint8_t>(3);
+    std::ostringstream oss;
+    std::cout << "{}";
+    return oss.str();
   }
 
   std::vector<float> & operator[](std::size_t idx)

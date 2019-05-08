@@ -1,7 +1,9 @@
 #include <string>
 #include <iostream>
 #include <queue>
+#include <deque>
 #include <thread>
+#include <memory>
 #include <curl/curl.h>
 
 // Tizen libraries
@@ -15,7 +17,7 @@
 
 #define NUM_SENSORS 2
 #define NUM_CHANNELS 3
-#define DURATION 60
+#define DURATION 60 // seconds
 #define ACCELEROMETER 0
 #define GYROSCOPE 1
 
@@ -33,9 +35,10 @@ struct appdata_s {
   sensor_h sensors[NUM_SENSORS];
   sensor_listener_h listners[NUM_SENSORS];
   int _deviceSamplingRate = 10;
-  std::vector<TMeasure> tMeasures[NUM_SENSORS];
-  std::thread netWorker; // CURL requests in the background
-  Queue<std::vector<uint8_t>> queue;
+  std::vector<int> _measureId;
+  std::deque<std::unique_ptr<TMeasure>> tMeasures[NUM_SENSORS];
+  std::thread netWorker; // format and CURL requests in the background
+  Queue<TMeasure> queue;
   std::string hostname;
   long port;
 
@@ -148,25 +151,17 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
     return;
   }
 
-  // TODO: handling measurement finish event
-  if (ad->tMeasures[sensor_type].front()._done)
-    return;
+  // TODO
+  // if (ad->tMeasures[sensor_type].empty())
+  //   ad->tMeasures[sensor_type].push_back(
+  //       std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
 
-  for (int i = 0; i < NUM_CHANNELS; i++) {
-    values.push_back(event->values[i]);
-  }
-
-  ad->tMeasures[sensor_type].front().tick(values);
+  // TODO: refer to https://github.com/snu-amp19-team1/queue
 }
 
 static void startMeasurement(appdata_s *ad)
 {
-  // TODO
-  TMeasure m[NUM_SENSORS];
-
   for (int i = 0; i < NUM_SENSORS; i++) {
-    ad->tMeasures[i].push_back(m[i]);
-
     sensor_listener_set_event_cb(ad->listners[i], ad->_deviceSamplingRate,
                                  sensorCb, ad);
   }
@@ -174,7 +169,7 @@ static void startMeasurement(appdata_s *ad)
 static void stopMeasurement(appdata_s *ad)
 {
   // TODO
-
+  // ad->queue.forceDone();
 }
 
 static void btnClickedCb(void *data, Evas_Object *obj, void *event_info)
@@ -251,6 +246,9 @@ create_base_gui(appdata_s *ad)
         sensor_get_default_sensor(SENSOR_GYROSCOPE, &ad->sensors[GYROSCOPE]);
         for (int i = 0; i < NUM_SENSORS; i++) {
           sensor_create_listener(ad->sensors[i], &ad->listners[i]);
+
+          // Initialize per-sensor measure IDs
+          ad->_measureId.push_back(0);
         }
 
         /* Show window after base gui is set up */

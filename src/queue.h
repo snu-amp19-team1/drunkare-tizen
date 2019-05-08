@@ -1,4 +1,5 @@
 #include <vector>
+#include <deque>
 #include <iostream>
 #include <atomic>
 #include <mutex>
@@ -23,8 +24,8 @@ struct Queue {
       return nullptr;
     }
 
-    auto result = std::move(container.back());
-    container.pop_back();
+    auto result = std::move(container.front());
+    container.pop_front();
     lk.unlock();
     return result;
   }
@@ -44,5 +45,5 @@ struct Queue {
   std::mutex m;
   std::condition_variable cv;
   std::atomic<bool> _done;
-  std::vector<std::unique_ptr<T>> container;
+  std::deque<std::unique_ptr<T>> container;
 };
