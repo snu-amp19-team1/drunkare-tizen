@@ -1,3 +1,3 @@
-## Drunkare-tizen
+## Drunkare-tizen-data
 
-Continuous sensing application running on Tizen devices.
+Collecting context-labeled long data
