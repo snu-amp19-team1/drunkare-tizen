@@ -69,6 +69,8 @@ win_back_cb(void *data, Evas_Object *obj, void *event_info)
 static void *netWorkerJob(void* data) {
   appdata_s* ad = (appdata_s*) data;
   std::string sensor_type = "";
+  CURL *curl;
+  CURLcode res;
 
   while (true) {
     // Get Measure pointer
@@ -90,7 +92,6 @@ static void *netWorkerJob(void* data) {
     }
 
     /* JSON formatting */
-
     // [TODO] timestamps
     std::string timestamps = ""; // [12123123123, 123132231123, 123123123123, ...]
     std::string data[NUM_CHANNELS] = {"", "", ""}; // data[0] = "10.0, 5.0, 2.0, ..."
@@ -108,10 +109,6 @@ static void *netWorkerJob(void* data) {
     dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
 
     /* Curl POST */
-    /*
-    CURL *curl;
-    CURLcode res;
-
     curl_global_init(CURL_GLOBAL_ALL);
     curl = curl_easy_init();
 
@@ -136,7 +133,6 @@ static void *netWorkerJob(void* data) {
 
     curl_easy_cleanup(curl);
     curl_global_cleanup();
-    */
   }
 
   return NULL;
