@@ -68,16 +68,28 @@ win_back_cb(void *data, Evas_Object *obj, void *event_info)
 //
 static void *netWorkerJob(void* data) {
   appdata_s* ad = (appdata_s*) data;
+  std::string sensor_type = "";
+
   while (true) {
     // Get Measure pointer
-    auto m = ad->queue.dequeue();
-    if (!m)
+    auto tMeasure = ad->queue.dequeue();
+    if (!tMeasure)
       break;
 
-    // [TODO] Check the Measure pointer type (accel or gyro)
+    // Check the Measure type (accel or gyro)
+    switch (tMeasure->_type) {
+    case ACCELEROMETER:
+    	sensor_type = "accel";
+    	break;
+    case GYROSCOPE:
+    	sensor_type = "gyro";
+    	break;
+    default:
+    	break;
+    }
 
     // [TODO] JSON formatting
-    std::string jsonObj = "{\"timestamps\":[...],\"accel\":{\"x\":[...],\"y\":[...],\"z\":[...]},\"gyro\":{\"x\":[...],\"y\":[...],\"z\":[...]}}";
+    std::string jsonObj = "{\"timestamps\":[...],\"" + sensor_type + "\":{\"x\":[...],\"y\":[...],\"z\":[...]}}";
     std::string url = "http://hostname:port";
     dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
 
