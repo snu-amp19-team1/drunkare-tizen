@@ -38,7 +38,7 @@ struct appdata_s {
   int _deviceSamplingRate = 10;
   std::vector<int> _measureId;
   std::deque<std::unique_ptr<TMeasure>> tMeasures[NUM_SENSORS];
-  std::thread netWorker; // format and CURL requests in the background
+  pthread_t netWorker; /* the thread identifier for netWorkerJob */
   Queue<TMeasure> queue;
   std::string hostname;
   long port;
@@ -75,6 +75,7 @@ static void *netWorkerJob(void* data) {
     auto tMeasure = ad->queue.dequeue();
     if (!tMeasure)
       break;
+    int numSample = tMeasure->_numSamples();
 
     // Check the Measure type (accel or gyro)
     switch (tMeasure->_type) {
@@ -88,9 +89,22 @@ static void *netWorkerJob(void* data) {
     	break;
     }
 
-    // [TODO] JSON formatting
-    std::string jsonObj = "{\"timestamps\":[...],\"" + sensor_type + "\":{\"x\":[...],\"y\":[...],\"z\":[...]}}";
-    std::string url = "http://hostname:port";
+    /* JSON formatting */
+
+    // [TODO] timestamps
+    std::string timestamps = ""; // [12123123123, 123132231123, 123123123123, ...]
+    std::string data[NUM_CHANNELS] = {"", "", ""}; // data[0] = "10.0, 5.0, 2.0, ..."
+
+    for (int i = 0; i < NUM_CHANNELS; i++) {
+    	for (int j = 0; j < numSample; j++) {
+    		data[i] += std::to_string(tMeasure->data[i][j]);
+    		if (j < numSample-1)
+    			data[i] += ",";
+    	}
+    }
+
+    std::string jsonObj = "{\"timestamps\":" + timestamps + ",\"" + sensor_type + "\":{\"x\":[" + data[0] + "],\"y\":[" + data[1] + "],\"z\":[" + data[2] + "]}}";
+    std::string url = ad->hostname + ":" + std::to_string(ad->port);
     dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
 
     /* Curl POST */
@@ -260,9 +274,8 @@ create_base_gui(appdata_s *ad)
     ad->port = 8000;
 
     /* Create a thread */
-    pthread_t thread_t; /* the thread identifier for netWorkerJob */
-    if (!pthread_create(&thread_t, NULL, netWorkerJob, ad))
-      perror("pthread_create!\n");
+    if (!pthread_create(&(ad->netWorker), NULL, netWorkerJob, ad))
+      dlog_print(DLOG_ERROR, LOG_TAG, "pthread_create() is failed.");
 
     init_button(ad, btnClickedCb);
     sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
