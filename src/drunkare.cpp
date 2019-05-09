@@ -17,7 +17,7 @@
 
 #define NUM_SENSORS 2
 #define NUM_CHANNELS 3
-#define DURATION 60 // seconds
+#define DURATION 5 // seconds
 #define ACCELEROMETER 0
 #define GYROSCOPE 1
 
@@ -124,7 +124,7 @@ static void test_curl(void *data, Evas_Object *obj, void *event_info)
 //
 static void netWorkerJob(appdata_s* ad) {
   while (true) {
-	// Get Measure pointer
+    // Get Measure pointer
     auto m = ad->queue.dequeue();
     if (!m)
       break;
@@ -186,24 +186,46 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
     return;
   }
 
-  // TODO
-  // if (ad->tMeasures[sensor_type].empty())
-  //   ad->tMeasures[sensor_type].push_back(
-  //       std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
-
   // TODO: refer to https://github.com/snu-amp19-team1/queue
+  // Save temporary value array
+  for (int i = 0; i < NUM_CHANNELS; i++) {
+    values.push_back(event->values[i]);
+  }
+
+  // Check tMeasures deque
+  if (ad->tMeasures[sensor_type].empty()) {
+	  ad->tMeasures[sensor_type].push_back(std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
+	  dlog_print(DLOG_DEBUG, LOG_TAG, "tMeasure ( %d ) is created.", ad->_measureId[sensor_type]-1);
+  }
+
+  // Tick (store values in Measure.data every periods)
+  ad->tMeasures[sensor_type].front()->tick(values);
+
+  // Check Measure->_done and enqueue
+  if (ad->tMeasures[sensor_type].front()->_done) {
+    dlog_print(DLOG_DEBUG, LOG_TAG, "tMeasure ( %d ) is done.", ad->_measureId[sensor_type]-1);
+    ad->queue.enqueue(std::move(ad->tMeasures[sensor_type].front()));
+    ad->tMeasures[sensor_type].pop_front();
+  }
 }
 
 static void startMeasurement(appdata_s *ad)
 {
+  dlog_print(DLOG_DEBUG, LOG_TAG, "START MEASUREMENT");
   for (int i = 0; i < NUM_SENSORS; i++) {
     sensor_listener_set_event_cb(ad->listners[i], ad->_deviceSamplingRate,
                                  sensorCb, ad);
+    sensor_listener_start(ad->listners[i]);
   }
+  ad->_isMeasuring = true;
 }
 static void stopMeasurement(appdata_s *ad)
 {
   // TODO
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    sensor_listener_stop(ad->listners[i]);
+  }
+  ad->_isMeasuring = false;
   // ad->queue.forceDone();
 }
 
@@ -214,12 +236,12 @@ static void btnClickedCb(void *data, Evas_Object *obj, void *event_info)
                                   EFL_UTIL_SCREEN_MODE_ALWAYS_ON);
 
   // 2. 
-  if (((appdata_s *) data)->_isMeasuring) {
+  if (!(((appdata_s *) data)->_isMeasuring)) {
     startMeasurement((appdata_s *) data /* more arguments? */);
-    // elm_object_text_set(ad->button, "Stop");
+    elm_object_text_set(((appdata_s *)data)->button, "Stop");
   } else {
     stopMeasurement((appdata_s *) data /* more arguments? */);
-    // elm_object_text_set(ad->button, "Start");
+    elm_object_text_set(((appdata_s *)data)->button, "Start");
   }
 }
 
@@ -228,7 +250,7 @@ init_button(appdata_s *ad,
             void (*cb)(void *data, Evas_Object *obj, void *event_info))
 {
   ad->button = elm_button_add(ad->win);
-  evas_object_smart_callback_add(ad->button, "clicked", test_curl, ad);
+  evas_object_smart_callback_add(ad->button, "clicked", cb, ad);
   evas_object_move(ad->button, 110, 150);
   evas_object_resize(ad->button, 140, 60);
   elm_object_text_set(ad->button, "Start");
@@ -276,6 +298,7 @@ create_base_gui(appdata_s *ad)
         ad->_isMeasuring = false;
         ad->hostname = "http://localhost";
         ad->port = 8000;
+
         init_button(ad, btnClickedCb);
         sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
         sensor_get_default_sensor(SENSOR_GYROSCOPE, &ad->sensors[GYROSCOPE]);
