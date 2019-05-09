@@ -10,6 +10,8 @@
 #include <sensor.h>
 #include <efl_util.h>
 #include <device/power.h>
+#include <Elementary.h>
+#include <pthread.h>
 
 #include "drunkare.h"
 #include "queue.h"
@@ -122,22 +124,23 @@ static void test_curl(void *data, Evas_Object *obj, void *event_info)
 //   3. Send POST request to <hostname:port>
 //   4. Repeat
 //
-static void netWorkerJob(appdata_s* ad) {
+static void *netWorkerJob(void* data) {
+  appdata_s* ad = (appdata_s*) data;
   while (true) {
     // Get Measure pointer
     auto m = ad->queue.dequeue();
     if (!m)
       break;
 
-    // TODO!
-
     // [TODO] Check the Measure pointer type (accel or gyro)
 
     // [TODO] JSON formatting
     std::string jsonObj = "{\"timestamps\":[...],\"accel\":{\"x\":[...],\"y\":[...],\"z\":[...]},\"gyro\":{\"x\":[...],\"y\":[...],\"z\":[...]}}";
     std::string url = "http://hostname:port";
+    dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
 
     /* Curl POST */
+    /*
     CURL *curl;
     CURLcode res;
 
@@ -157,14 +160,18 @@ static void netWorkerJob(appdata_s* ad) {
 
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        /* Curl failed */
+        // Curl failed
     	dlog_print(DLOG_ERROR, LOG_TAG, "netWorkerJob() is failed. err = %d", res);
         //return;
+    	pthread_exit(NULL);
     }
 
     curl_easy_cleanup(curl);
     curl_global_cleanup();
+    */
   }
+
+  return NULL;
 }
 
 void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
@@ -293,23 +300,27 @@ create_base_gui(appdata_s *ad)
 	evas_object_size_hint_weight_set(ad->label, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
 	elm_object_content_set(ad->conform, ad->label);
 
-        /* Custom initializations are here! */
-        ad->response = ""; // TODO: delete this
-        ad->_isMeasuring = false;
-        ad->hostname = "http://localhost";
-        ad->port = 8000;
+    /* Custom initializations are here! */
+    ad->response = ""; // TODO: delete this
+    ad->_isMeasuring = false;
+    ad->hostname = "http://localhost";
+    ad->port = 8000;
 
-        init_button(ad, btnClickedCb);
-        sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
-        sensor_get_default_sensor(SENSOR_GYROSCOPE, &ad->sensors[GYROSCOPE]);
-        for (int i = 0; i < NUM_SENSORS; i++) {
-          sensor_create_listener(ad->sensors[i], &ad->listners[i]);
+    /* Create a thread */
+    pthread_t thread_t; /* the thread identifier for netWorkerJob */
+    if (!pthread_create(&thread_t, NULL, netWorkerJob, ad))
+      perror("pthread_create!\n");
 
-          // Initialize per-sensor measure IDs
-          ad->_measureId.push_back(0);
-        }
+    init_button(ad, btnClickedCb);
+    sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
+    sensor_get_default_sensor(SENSOR_GYROSCOPE, &ad->sensors[GYROSCOPE]);
+    for (int i = 0; i < NUM_SENSORS; i++) {
+      sensor_create_listener(ad->sensors[i], &ad->listners[i]);
+      // Initialize per-sensor measure IDs
+      ad->_measureId.push_back(0);
+    }
 
-        /* Show window after base gui is set up */
+    /* Show window after base gui is set up */
 	evas_object_show(ad->win);
 }
 
@@ -390,13 +401,13 @@ ui_app_low_memory(app_event_info_h event_info, void *user_data)
 int
 main(int argc, char *argv[])
 {
-  appdata_s ad;
+    appdata_s ad;
 	int ret = 0;
 
 	ui_app_lifecycle_callback_s event_callback = {0,};
 	app_event_handler_h handlers[5] = {NULL, };
 
-        bool supported[NUM_SENSORS];
+    bool supported[NUM_SENSORS];
 	sensor_is_supported(SENSOR_ACCELEROMETER, &supported[ACCELEROMETER]);
 	sensor_is_supported(SENSOR_GYROSCOPE, &supported[GYROSCOPE]);
 	if (!supported[ACCELEROMETER] || !supported[GYROSCOPE]) {
