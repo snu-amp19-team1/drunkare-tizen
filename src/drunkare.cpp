@@ -1,10 +1,11 @@
 #include <string>
 #include <iostream>
+#include <fstream>
 #include <queue>
 #include <deque>
-#include <thread>
+// #include <thread>
+#include <pthread.h>
 #include <memory>
-#include <curl/curl.h>
 
 // Tizen libraries
 #include <sensor.h>
@@ -17,30 +18,41 @@
 
 #define NUM_SENSORS 2
 #define NUM_CHANNELS 3
+#define NUM_CONTEXTS 4
 #define DURATION 60 // seconds
+#define CONTEXT_DURATION 600 // seconds
+#define MAX_MEASURE_ID (CONTEXT_DURATION / DURATION)
 #define ACCELEROMETER 0
 #define GYROSCOPE 1
 
 using TMeasure = Measure<NUM_CHANNELS, DURATION>;
 
+static std::vector<std::string> contexts = {"drink", "eat", "cafe", "desk"};
+static std::vector<std::pair<int, int>> ofs = {
+    {50, 50}, {190, 50}, {50, 190}, {190, 190}};
+
 struct appdata_s {
   Evas_Object *win;
   Evas_Object *conform;
   Evas_Object *label;
-  Evas_Object *button;
+  std::vector<Evas_Object *> buttons;
   std::string response; // TODO: delete this
 
   // Extra app data
   bool _isMeasuring;
+  int _numWrite;
+  int _context;
   sensor_h sensors[NUM_SENSORS];
   sensor_listener_h listners[NUM_SENSORS];
   int _deviceSamplingRate = 10;
   std::vector<int> _measureId;
+  std::vector<int> _doneMeasureId;
   std::deque<std::unique_ptr<TMeasure>> tMeasures[NUM_SENSORS];
-  std::thread netWorker; // format and CURL requests in the background
+  pthread_t fsWorker; // format and write to file system
   Queue<TMeasure> queue;
-  std::string hostname;
-  long port;
+
+  std::string filepath;
+  std::string pathname;
 
   appdata_s() : win(nullptr) {}
 };
@@ -58,79 +70,37 @@ win_back_cb(void *data, Evas_Object *obj, void *event_info)
 	elm_win_lower(ad->win);
 }
 
-// Writes `size * nmenb` bytes to `userp` and return the bytes written.
-// `userp` is expected to be a `std::string` object.
-size_t curl_get_cb(void *response, size_t size, size_t nmenb, void *userp) {
-  ((std::string*)userp)->append((char *)response, size * nmenb);
-
-  return size * nmenb;
-}
-
-static void update_ui(void *data) {
-  appdata_s *ad = (appdata_s *) data;
-  elm_object_text_set(ad->label, ad->response.c_str());
-}
-
-// This is a simple example of initializing and performing curl using
-// `libcurl`. For `POST` requests, refer to this external link.
 //
-//     https://curl.haxx.se/libcurl/c/http-post.html
-//
-static void test_curl(void *data, Evas_Object *obj, void *event_info)
-{
-  CURL* curl;
-  CURLcode curl_err;
-
-  // Clear `ad->response` before performing curl
-  ((appdata_s *)data)->response.clear();
-
-  curl = curl_easy_init();
-
-  if (curl) {
-    curl_easy_setopt(curl, CURLOPT_URL, "http://www.tizen.org");
-
-    /* Use a GET */
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-
-    /* Setup a write callback */
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_get_cb);
-
-    /* Setup a write data */
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &((appdata_s *)data)->response);
-
-    curl_err = curl_easy_perform(curl);
-    if (curl_err != CURLE_OK) {
-      /* Curl failed */
-
-      return;
-    }
-
-    // Gracefully clean up curl object
-    curl_easy_cleanup(curl);
-  }
-
-  if (!((appdata_s *)data)->response.length()) {
-    ((appdata_s *)data)->response = "curl failed";
-  }
-  update_ui(data);
-}
-
-//
-// Main function for `netWorker`.
+// Main function for `fsWorker`.
 //   1. Dequeue a `Measure` from `ad->queue`
 //   2. Format POST fields
 //   3. Send POST request to <hostname:port>
 //   4. Repeat
 //
-static void netWorkerJob(appdata_s* ad) {
+static void* fsWorkerJob(void* data) {
+  appdata_s *ad = (appdata_s *)data;
+
   while (true) {
-    auto m = ad->queue.dequeue();
-    if (!m)
+    auto tMeasure = ad->queue.dequeue();
+
+    if (!tMeasure)
       break;
 
-    // TODO!
-  }
+    std::ofstream ofs;
+    ofs.open(ad->pathname.c_str() , ofs.app);
+
+    if (!ofs.is_open()) {
+      dlog_print(DLOG_DEBUG, "fsWorkerJob", "[-] ofs.is_open()");
+    } else {
+      ofs << tMeasure->format() << '\n';
+    }
+  };
+
+  return nullptr;
 }
+
+static void startMeasurement(appdata_s *ad);
+static void stopMeasurement(appdata_s *ad);
 
 void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
 {
@@ -151,53 +121,143 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
     return;
   }
 
-  // TODO
-  // if (ad->tMeasures[sensor_type].empty())
-  //   ad->tMeasures[sensor_type].push_back(
-  //       std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
+  // Save temporary value array
+  for (int i = 0; i < NUM_CHANNELS; i++) {
+    values.push_back(event->values[i]);
+  }
 
-  // TODO: refer to https://github.com/snu-amp19-team1/queue
+  // Check tMeasures deque
+  if (ad->tMeasures[sensor_type].empty()) {
+    ad->tMeasures[sensor_type].push_back(
+        std::make_unique<TMeasure>(ad->_measureId[sensor_type]++,
+                                   sensor_type, ad->_context));
+    dlog_print(DLOG_DEBUG, LOG_TAG, "tMeasure ( %d ) is created.",
+               ad->_measureId[sensor_type] - 1);
+  }
+
+  // Tick (store values in Measure.data every periods)
+  ad->tMeasures[sensor_type].front()->tick(values);
+
+  // Check Measure->_done and enqueue
+  if (ad->tMeasures[sensor_type].front()->_done) {
+    dlog_print(DLOG_DEBUG, LOG_TAG, "tMeasure ( %d ) is done.",
+               ad->_measureId[sensor_type] - 1);
+
+    ad->_doneMeasureId[sensor_type] = ad->tMeasures[sensor_type].front()->_id;
+
+    ad->queue.enqueue(std::move(ad->tMeasures[sensor_type].front()));
+    ad->tMeasures[sensor_type].pop_front();
+
+    // Check termination condition
+    if (ad->_doneMeasureId[sensor_type] >= MAX_MEASURE_ID) {
+      bool allFinished = true;
+
+      for (auto doneId : ad->_doneMeasureId) {
+        allFinished &= (doneId >= MAX_MEASURE_ID);
+      }
+
+      // dlog_print(DLOG_DEBUG, "sensorCb", "[+] Hey, are we done?");
+
+      if (allFinished) {
+        // dlog_print(DLOG_DEBUG, "sensorCb", "[+] Yes, we are done!");
+        stopMeasurement(ad);
+        return;
+      }
+
+      // dlog_print(DLOG_DEBUG, "sensorCb", "[+] Nope, we are not done yet!");
+    }
+  }
 }
 
 static void startMeasurement(appdata_s *ad)
 {
+  ad->queue.clear();
+
+  // Create thread here
+  if (pthread_create(&ad->fsWorker, nullptr, fsWorkerJob, (void *)ad) < 0) {
+    dlog_print(DLOG_ERROR, "btnClickedCb", "[-] pthread_create()");
+    return;
+  };
+
   for (int i = 0; i < NUM_SENSORS; i++) {
     sensor_listener_set_event_cb(ad->listners[i], ad->_deviceSamplingRate,
                                  sensorCb, ad);
+    sensor_listener_start(ad->listners[i]);
   }
+  ad->_isMeasuring = true;
 }
+
 static void stopMeasurement(appdata_s *ad)
 {
-  // TODO
-  // ad->queue.forceDone();
+  ad->_isMeasuring = false;
+
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    sensor_listener_stop(ad->listners[i]);
+  }
+
+  ad->queue.forceDone();
+  pthread_join(ad->fsWorker, nullptr);
+
+  for (int i = 0; i < ad->_measureId.size(); i++) {
+    ad->_measureId[i] = 0;
+    ad->_doneMeasureId[i] = -1;
+    // dlog_print(DLOG_DEBUG, "stopMeasurement", "[+] ad->_measureId[%d] = %d", i,
+    //            ad->_measureId[i]);
+  }
+
+  for (auto button : ad->buttons) {
+    elm_object_disabled_set(button, EINA_FALSE);
+  }
 }
 
 static void btnClickedCb(void *data, Evas_Object *obj, void *event_info)
 {
-  // 1. Set screen always on (This is due to hardware limitation)
-  efl_util_set_window_screen_mode(((appdata_s *)data)->win,
-                                  EFL_UTIL_SCREEN_MODE_ALWAYS_ON);
+  appdata_s* ad = (appdata_s *)data;
 
-  // 2. 
-  if (((appdata_s *) data)->_isMeasuring) {
-    startMeasurement((appdata_s *) data /* more arguments? */);
-    // elm_object_text_set(ad->button, "Stop");
-  } else {
-    stopMeasurement((appdata_s *) data /* more arguments? */);
-    // elm_object_text_set(ad->button, "Start");
+  // 1. Set screen always on (This is due to hardware limitation)
+  efl_util_set_window_screen_mode(ad->win, EFL_UTIL_SCREEN_MODE_ALWAYS_ON);
+
+  // 2. Set context
+  try {
+    std::string context = std::string(elm_object_text_get(obj));
+
+    if (context == "drink")
+      ad->_context = 0;
+    else if (context == "eat")
+      ad->_context = 1;
+    else if (context == "cafe")
+      ad->_context = 2;
+    else if (context == "desk")
+      ad->_context = 3;
+    else
+      throw std::exception();
+  } catch (const std::exception& e) {
+    dlog_print(DLOG_ERROR, "btnClickedCb", "[-] %s", e.what());
+  }
+
+  if (!ad->_isMeasuring) {
+    for (auto button : ad->buttons) {
+      elm_object_disabled_set(button, EINA_TRUE);
+    }
+
+    startMeasurement(ad);
   }
 }
 
 static void
-init_button(appdata_s *ad,
+init_buttons(appdata_s *ad,
             void (*cb)(void *data, Evas_Object *obj, void *event_info))
 {
-  ad->button = elm_button_add(ad->win);
-  evas_object_smart_callback_add(ad->button, "clicked", test_curl, ad);
-  evas_object_move(ad->button, 110, 150);
-  evas_object_resize(ad->button, 140, 60);
-  elm_object_text_set(ad->button, "Start");
-  evas_object_show(ad->button);
+  for (int i = 0; i < NUM_CONTEXTS; i++) {
+    auto button = elm_button_add(ad->win);
+    evas_object_smart_callback_add(button, "clicked", cb, ad);
+    ad->buttons.push_back(button);
+    evas_object_move(button, ofs[i].first, ofs[i].second);
+    evas_object_resize(button, 120, 120);
+    elm_object_text_set(button, contexts[i].c_str());
+    evas_object_show(button);
+    ad->buttons.push_back(button);
+  }
 }
 
 static void
@@ -239,9 +299,7 @@ create_base_gui(appdata_s *ad)
         /* Custom initializations are here! */
         ad->response = ""; // TODO: delete this
         ad->_isMeasuring = false;
-        ad->hostname = "http://localhost";
-        ad->port = 8000;
-        init_button(ad, btnClickedCb);
+        init_buttons(ad, btnClickedCb);
         sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
         sensor_get_default_sensor(SENSOR_GYROSCOPE, &ad->sensors[GYROSCOPE]);
         for (int i = 0; i < NUM_SENSORS; i++) {
@@ -249,7 +307,11 @@ create_base_gui(appdata_s *ad)
 
           // Initialize per-sensor measure IDs
           ad->_measureId.push_back(0);
+          ad->_doneMeasureId.push_back(-1);
         }
+
+        ad->filepath = std::string(app_get_data_path());
+        ad->pathname = ad->filepath + std::string("data.csv");
 
         /* Show window after base gui is set up */
 	evas_object_show(ad->win);

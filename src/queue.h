@@ -42,6 +42,12 @@ struct Queue {
     cv.notify_all();
   }
 
+  void clear() {
+    container.clear();
+    _done.store(false);
+    cv.notify_all();
+  }
+
   std::mutex m;
   std::condition_variable cv;
   std::atomic<bool> _done;

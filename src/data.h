@@ -17,12 +17,13 @@ struct Measure {
 
   int _id;
   int _type;
+  int _context;
   size_t _tick, _nextIdx; // tick: deviceSamplingPeriod, nextIdx: samplingPeriod
   bool _done;
   float data[C][D * 1000 / _samplingPeriod];
 
-  Measure(int id, int type)
-    : _id(id), _type(type), _tick(0), _nextIdx(0), _done(false) {}
+  Measure(int id, int type, int context)
+    : _id(id), _type(type), _context(context), _tick(0), _nextIdx(0), _done(false) {}
 
   constexpr size_t _size() {
     return 4 + C * D * 1000 / _samplingPeriod;
@@ -36,8 +37,14 @@ struct Measure {
   std::string format()
   {
     std::ostringstream oss;
-    std::cout << "{}";
-    return oss.str();
+    oss << _id << ',' << _context << ',' << _type << ',';
+    for (int c = 0; c < _numChannels(); c++) {
+      for (float val : data[c]) {
+        oss << val << ',';
+      }
+    }
+    std::string s = oss.str();
+    return s.substr(0, s.size()-1);
   }
 
   std::vector<float> & operator[](std::size_t idx)
