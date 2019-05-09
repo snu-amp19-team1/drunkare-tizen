@@ -30,7 +30,6 @@ struct appdata_s {
   Evas_Object *conform;
   Evas_Object *label;
   Evas_Object *button;
-  std::string response; // TODO: delete this
 
   // Extra app data
   bool _isMeasuring;
@@ -58,63 +57,6 @@ win_back_cb(void *data, Evas_Object *obj, void *event_info)
 	appdata_s *ad = (appdata_s *)data;
         /* Let window go to hide state. */
 	elm_win_lower(ad->win);
-}
-
-// Writes `size * nmenb` bytes to `userp` and return the bytes written.
-// `userp` is expected to be a `std::string` object.
-size_t curl_get_cb(void *response, size_t size, size_t nmenb, void *userp) {
-  ((std::string*)userp)->append((char *)response, size * nmenb);
-
-  return size * nmenb;
-}
-
-static void update_ui(void *data) {
-  appdata_s *ad = (appdata_s *) data;
-  elm_object_text_set(ad->label, ad->response.c_str());
-}
-
-// This is a simple example of initializing and performing curl using
-// `libcurl`. For `POST` requests, refer to this external link.
-//
-//     https://curl.haxx.se/libcurl/c/http-post.html
-//
-static void test_curl(void *data, Evas_Object *obj, void *event_info)
-{
-  CURL* curl;
-  CURLcode curl_err;
-
-  // Clear `ad->response` before performing curl
-  ((appdata_s *)data)->response.clear();
-
-  curl = curl_easy_init();
-
-  if (curl) {
-    curl_easy_setopt(curl, CURLOPT_URL, "http://www.tizen.org");
-
-    /* Use a GET */
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-
-    /* Setup a write callback */
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_get_cb);
-
-    /* Setup a write data */
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &((appdata_s *)data)->response);
-
-    curl_err = curl_easy_perform(curl);
-    if (curl_err != CURLE_OK) {
-      /* Curl failed */
-
-      return;
-    }
-
-    // Gracefully clean up curl object
-    curl_easy_cleanup(curl);
-  }
-
-  if (!((appdata_s *)data)->response.length()) {
-    ((appdata_s *)data)->response = "curl failed";
-  }
-  update_ui(data);
 }
 
 //
@@ -301,7 +243,6 @@ create_base_gui(appdata_s *ad)
 	elm_object_content_set(ad->conform, ad->label);
 
     /* Custom initializations are here! */
-    ad->response = ""; // TODO: delete this
     ad->_isMeasuring = false;
     ad->hostname = "http://localhost";
     ad->port = 8000;
