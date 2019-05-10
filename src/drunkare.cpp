@@ -1,20 +1,54 @@
 #include <string>
+#include <iostream>
+#include <queue>
+#include <deque>
+#include <thread>
+#include <memory>
 #include <curl/curl.h>
 
+// Tizen libraries
+#include <sensor.h>
+#include <efl_util.h>
+#include <device/power.h>
+#include <Elementary.h>
+#include <pthread.h>
+
 #include "drunkare.h"
+#include "queue.h"
+#include "data.h"
 
-typedef struct appdata {
-	Evas_Object *win;
-	Evas_Object *conform;
-	Evas_Object *label;
+#define NUM_SENSORS 2
+#define NUM_CHANNELS 3
+#define DURATION 60 // seconds
+#define ACCELEROMETER 0
+#define GYROSCOPE 1
+
+using TMeasure = Measure<NUM_CHANNELS, DURATION>;
+
+struct appdata_s {
+  Evas_Object *win;
+  Evas_Object *conform;
+  Evas_Object *label;
   Evas_Object *button;
-  std::string response;
-} appdata_s;
 
-static void
-win_delete_request_cb(void *data, Evas_Object *obj, void *event_info)
-{
-	ui_app_exit();
+  // Extra app data
+  bool _isMeasuring;
+  sensor_h sensors[NUM_SENSORS];
+  sensor_listener_h listners[NUM_SENSORS];
+  int _deviceSamplingRate = 10;
+  std::vector<int> _measureId;
+  std::deque<std::unique_ptr<TMeasure>> tMeasures[NUM_SENSORS];
+  pthread_t netWorker; /* the thread identifier for netWorkerJob */
+  Queue<TMeasure> queue;
+  std::string hostname;
+  long port;
+
+  appdata_s() : win(nullptr) {}
+};
+
+static void win_delete_request_cb(void *data, Evas_Object *obj,
+                                  void *event_info) {
+  ui_app_exit();
 }
 
 static void
@@ -25,60 +59,138 @@ win_back_cb(void *data, Evas_Object *obj, void *event_info)
 	elm_win_lower(ad->win);
 }
 
-// Writes `size * nmenb` bytes to `userp` and return the bytes written.
-// `userp` is expected to be a `std::string` object.
-size_t curl_get_cb(void *response, size_t size, size_t nmenb, void *userp) {
-  ((std::string*)userp)->append((char *)response, size * nmenb);
-
-  return size * nmenb;
-}
-
-static void update_ui(void *data) {
-  appdata_s *ad = (appdata_s *) data;
-  elm_object_text_set(ad->label, ad->response.c_str());
-}
-
-// This is a simple example of initializing and performing curl using
-// `libcurl`. For `POST` requests, refer to this external link.
 //
-//     https://curl.haxx.se/libcurl/c/http-post.html
+// Main function for `netWorker`.
+//   1. Dequeue a `Measure` from `ad->queue`
+//   2. Format POST fields
+//   3. Send POST request to <hostname:port>
+//   4. Repeat
 //
-static void test_curl(void *data, Evas_Object *obj, void *event_info) {
-  CURL* curl;
-  CURLcode curl_err;
+static void *netWorkerJob(void* data) {
+  appdata_s* ad = (appdata_s*) data;
+  CURL *curl;
+  CURLcode res;
 
-  // Clear `ad->response` before performing curl
-  ((appdata_s *)data)->response.clear();
+  while (true) {
+    // Get Measure pointer
+    auto tMeasure = ad->queue.dequeue();
+    if (!tMeasure)
+      break;
 
-  curl = curl_easy_init();
+    /* JSON formatting */
+    std::string jsonObj = tMeasure->format();
+    std::string url = ad->hostname + ":" + std::to_string(ad->port);
+    dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
 
-  if (curl) {
-    curl_easy_setopt(curl, CURLOPT_URL, "http://www.tizen.org");
+    /* Curl POST */
+    curl_global_init(CURL_GLOBAL_ALL);
+    curl = curl_easy_init();
 
-    /* Use a GET */
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Accept: application/json");
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "charsets: utf-8");
 
-    /* Setup a write callback */
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_get_cb);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonObj.c_str());
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcrp/0.1");
 
-    /* Setup a write data */
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &((appdata_s *)data)->response);
-
-    curl_err = curl_easy_perform(curl);
-    if (curl_err != CURLE_OK) {
-      /* Curl failed */
-
-      return;
+    res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        // Curl failed
+    	dlog_print(DLOG_ERROR, LOG_TAG, "netWorkerJob() is failed. err = %d", res);
+        //return;
+    	pthread_exit(NULL);
     }
 
-    // Gracefully clean up curl object
     curl_easy_cleanup(curl);
+    curl_global_cleanup();
   }
 
-  if (!((appdata_s *)data)->response.length()) {
-    ((appdata_s *)data)->response = "curl failed";
+  return NULL;
+}
+
+void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
+{
+  appdata_s *ad = (appdata_s *)user_data;
+  int sensor_type;
+  sensor_type_e type;
+  sensor_get_type(sensor, &type);
+  std::vector<float> values;
+  unsigned long long timestamp;
+
+  switch (type) {
+  case SENSOR_ACCELEROMETER:
+    sensor_type = ACCELEROMETER;
+    break;
+  case SENSOR_GYROSCOPE:
+    sensor_type = GYROSCOPE;
+    break;
+  default:
+    return;
   }
-  update_ui(data);
+
+  // TODO: refer to https://github.com/snu-amp19-team1/queue
+  // Save temporary value array
+  for (int i = 0; i < NUM_CHANNELS; i++) {
+    values.push_back(event->values[i]);
+  }
+
+  // Check tMeasures deque
+  if (ad->tMeasures[sensor_type].empty()) {
+	  ad->tMeasures[sensor_type].push_back(std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
+	  timestamp = event->timestamp;
+	  ad->tMeasures[sensor_type].front()->setTimestamp(timestamp);
+	  dlog_print(DLOG_DEBUG, LOG_TAG, "[%d] tMeasure ( %d ) is created. timestamp = %lld", sensor_type, ad->_measureId[sensor_type]-1, timestamp);
+  }
+
+  // Tick (store values in Measure.data every periods)
+  ad->tMeasures[sensor_type].front()->tick(values);
+
+  // Check Measure->_done and enqueue
+  if (ad->tMeasures[sensor_type].front()->_done) {
+    dlog_print(DLOG_DEBUG, LOG_TAG, "[%d] tMeasure ( %d ) is done.", sensor_type, ad->_measureId[sensor_type]-1);
+    ad->queue.enqueue(std::move(ad->tMeasures[sensor_type].front()));
+    ad->tMeasures[sensor_type].pop_front();
+  }
+}
+
+static void startMeasurement(appdata_s *ad)
+{
+  dlog_print(DLOG_DEBUG, LOG_TAG, "START MEASUREMENT");
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    sensor_listener_set_event_cb(ad->listners[i], ad->_deviceSamplingRate,
+                                 sensorCb, ad);
+    sensor_listener_start(ad->listners[i]);
+  }
+  ad->_isMeasuring = true;
+}
+static void stopMeasurement(appdata_s *ad)
+{
+  // TODO
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    sensor_listener_stop(ad->listners[i]);
+  }
+  ad->_isMeasuring = false;
+  // ad->queue.forceDone();
+}
+
+static void btnClickedCb(void *data, Evas_Object *obj, void *event_info)
+{
+  // 1. Set screen always on (This is due to hardware limitation)
+  efl_util_set_window_screen_mode(((appdata_s *)data)->win,
+                                  EFL_UTIL_SCREEN_MODE_ALWAYS_ON);
+
+  // 2. 
+  if (!(((appdata_s *) data)->_isMeasuring)) {
+    startMeasurement((appdata_s *) data /* more arguments? */);
+    elm_object_text_set(((appdata_s *)data)->button, "Stop");
+  } else {
+    stopMeasurement((appdata_s *) data /* more arguments? */);
+    elm_object_text_set(((appdata_s *)data)->button, "Start");
+  }
 }
 
 static void
@@ -86,10 +198,10 @@ init_button(appdata_s *ad,
             void (*cb)(void *data, Evas_Object *obj, void *event_info))
 {
   ad->button = elm_button_add(ad->win);
-  evas_object_smart_callback_add(ad->button, "clicked", test_curl, ad);
+  evas_object_smart_callback_add(ad->button, "clicked", cb, ad);
   evas_object_move(ad->button, 110, 150);
   evas_object_resize(ad->button, 140, 60);
-  elm_object_text_set(ad->button, "Test");
+  elm_object_text_set(ad->button, "Start");
   evas_object_show(ad->button);
 }
 
@@ -129,10 +241,26 @@ create_base_gui(appdata_s *ad)
 	evas_object_size_hint_weight_set(ad->label, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
 	elm_object_content_set(ad->conform, ad->label);
 
-        init_button(ad, test_curl);
-        ad->response = "";
+    /* Custom initializations are here! */
+    ad->_isMeasuring = false;
+    ad->hostname = "";
+    ad->port = 8083;
 
-	/* Show window after base gui is set up */
+    /* Create a thread */
+    int error = pthread_create(&(ad->netWorker), NULL, netWorkerJob, ad);
+    if (error)
+      dlog_print(DLOG_ERROR, LOG_TAG, "pthread_create() is failed. err = %d", error);
+
+    init_button(ad, btnClickedCb);
+    sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
+    sensor_get_default_sensor(SENSOR_GYROSCOPE, &ad->sensors[GYROSCOPE]);
+    for (int i = 0; i < NUM_SENSORS; i++) {
+      sensor_create_listener(ad->sensors[i], &ad->listners[i]);
+      // Initialize per-sensor measure IDs
+      ad->_measureId.push_back(0);
+    }
+
+    /* Show window after base gui is set up */
 	evas_object_show(ad->win);
 }
 
@@ -213,11 +341,29 @@ ui_app_low_memory(app_event_info_h event_info, void *user_data)
 int
 main(int argc, char *argv[])
 {
-	appdata_s ad = {0,};
+    appdata_s ad;
 	int ret = 0;
 
 	ui_app_lifecycle_callback_s event_callback = {0,};
 	app_event_handler_h handlers[5] = {NULL, };
+
+    bool supported[NUM_SENSORS];
+	sensor_is_supported(SENSOR_ACCELEROMETER, &supported[ACCELEROMETER]);
+	sensor_is_supported(SENSOR_GYROSCOPE, &supported[GYROSCOPE]);
+	if (!supported[ACCELEROMETER] || !supported[GYROSCOPE]) {
+		/* Accelerometer is not supported on the current device */
+		return 1;
+	}
+
+        // Initialize sensor handles
+        // 	sensor_get_default_sensor(SENSOR_ACCELEROMETER, &sensors[ACCELEROMETER]);
+        // 	sensor_get_default_sensor(SENSOR_GYROSCOPE, &sensors[GYROSCOPE]);
+        // 
+        //         // Initialize sensor listeners
+        //         for (int i = 0; i < NUM_SENSORS; i++) {
+        //           sensor_create_listener(sensors[sensor_index],
+        //                                  &listeners[sensor_index]);
+        //         }
 
 	event_callback.create = app_create;
 	event_callback.terminate = app_terminate;
