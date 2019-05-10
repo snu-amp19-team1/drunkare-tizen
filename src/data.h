@@ -17,6 +17,7 @@ struct Measure {
 
   int _id;
   int _type;
+  unsigned long long timestamp; // timestamp of first data
   size_t _tick, _nextIdx; // tick: deviceSamplingPeriod, nextIdx: samplingPeriod
   bool _done;
   float data[C][D * 1000 / _samplingPeriod];
@@ -33,6 +34,7 @@ struct Measure {
     return _nextIdx;
   }
 
+  // Remove?
   std::string format()
   {
     std::ostringstream oss;
@@ -63,6 +65,7 @@ struct Measure {
     if (readValue.size() != _numChannels())
       return;
 
+    // Store data
     for (int i = 0; i < _numChannels(); i++) {
       data[i][idx] = readValue[i];
     }
@@ -70,5 +73,10 @@ struct Measure {
     if (_nextIdx == (_duration() * 1000 / _samplingPeriod)) {
       _done = true;
     }
+  }
+
+  void setTimestamp(unsigned long long timestamp)
+  {
+  	this->timestamp = timestamp;
   }
 };

@@ -92,8 +92,7 @@ static void *netWorkerJob(void* data) {
     }
 
     /* JSON formatting */
-    // [TODO] timestamps
-    std::string timestamps = ""; // [12123123123, 123132231123, 123123123123, ...]
+    std::string timestamps = std::to_string(tMeasure->timestamp);
     std::string data[NUM_CHANNELS] = {"", "", ""}; // data[0] = "10.0, 5.0, 2.0, ..."
 
     for (int i = 0; i < NUM_CHANNELS; i++) {
@@ -145,6 +144,7 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
   sensor_type_e type;
   sensor_get_type(sensor, &type);
   std::vector<float> values;
+  unsigned long long timestamp;
 
   switch (type) {
   case SENSOR_ACCELEROMETER:
@@ -166,7 +166,9 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
   // Check tMeasures deque
   if (ad->tMeasures[sensor_type].empty()) {
 	  ad->tMeasures[sensor_type].push_back(std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
-	  dlog_print(DLOG_DEBUG, LOG_TAG, "tMeasure ( %d ) is created.", ad->_measureId[sensor_type]-1);
+	  timestamp = event->timestamp;
+	  ad->tMeasures[sensor_type].front()->setTimestamp(timestamp);
+	  dlog_print(DLOG_DEBUG, LOG_TAG, "[%d] tMeasure ( %d ) is created. timestamp = %lld", sensor_type, ad->_measureId[sensor_type]-1, timestamp);
   }
 
   // Tick (store values in Measure.data every periods)
@@ -174,7 +176,7 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
 
   // Check Measure->_done and enqueue
   if (ad->tMeasures[sensor_type].front()->_done) {
-    dlog_print(DLOG_DEBUG, LOG_TAG, "tMeasure ( %d ) is done.", ad->_measureId[sensor_type]-1);
+    dlog_print(DLOG_DEBUG, LOG_TAG, "[%d] tMeasure ( %d ) is done.", sensor_type, ad->_measureId[sensor_type]-1);
     ad->queue.enqueue(std::move(ad->tMeasures[sensor_type].front()));
     ad->tMeasures[sensor_type].pop_front();
   }
