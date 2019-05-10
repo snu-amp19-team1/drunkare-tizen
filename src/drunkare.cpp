@@ -79,7 +79,7 @@ static void *netWorkerJob(void* data) {
 
     /* JSON formatting */
     std::string jsonObj = tMeasure->format();
-    std::string url = ad->hostname + ":" + std::to_string(ad->port);
+    std::string url = ad->hostname + ":" + std::to_string(ad->port) + "/data/";
     dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
 
     /* Curl POST */
