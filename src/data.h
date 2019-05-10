@@ -60,7 +60,7 @@ struct Measure {
 
 	 for (unsigned int i = 0; i < C; i++) {
 	   for (int j = 0; j < numSample; j++) {
-	     data[i] += std::to_string(data[i][j]);
+	     data[i] += std::to_string(this->data[i][j]);
 	     if (j < numSample-1)
 	       data[i] += ",";
 	   }
