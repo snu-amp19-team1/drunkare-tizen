@@ -68,7 +68,6 @@ win_back_cb(void *data, Evas_Object *obj, void *event_info)
 //
 static void *netWorkerJob(void* data) {
   appdata_s* ad = (appdata_s*) data;
-  std::string sensor_type = "";
   CURL *curl;
   CURLcode res;
 
@@ -77,33 +76,9 @@ static void *netWorkerJob(void* data) {
     auto tMeasure = ad->queue.dequeue();
     if (!tMeasure)
       break;
-    int numSample = tMeasure->_numSamples();
-
-    // Check the Measure type (accel or gyro)
-    switch (tMeasure->_type) {
-    case ACCELEROMETER:
-    	sensor_type = "accel";
-    	break;
-    case GYROSCOPE:
-    	sensor_type = "gyro";
-    	break;
-    default:
-    	break;
-    }
 
     /* JSON formatting */
-    std::string timestamps = std::to_string(tMeasure->timestamp);
-    std::string data[NUM_CHANNELS] = {"", "", ""}; // data[0] = "10.0, 5.0, 2.0, ..."
-
-    for (int i = 0; i < NUM_CHANNELS; i++) {
-    	for (int j = 0; j < numSample; j++) {
-    		data[i] += std::to_string(tMeasure->data[i][j]);
-    		if (j < numSample-1)
-    			data[i] += ",";
-    	}
-    }
-
-    std::string jsonObj = "{\"timestamps\":" + timestamps + ",\"" + sensor_type + "\":{\"x\":[" + data[0] + "],\"y\":[" + data[1] + "],\"z\":[" + data[2] + "]}}";
+    std::string jsonObj = tMeasure->format();
     std::string url = ad->hostname + ":" + std::to_string(ad->port);
     dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
 
@@ -268,7 +243,7 @@ create_base_gui(appdata_s *ad)
 
     /* Custom initializations are here! */
     ad->_isMeasuring = false;
-    ad->hostname = "http://lynx.snu.ac.kr";
+    ad->hostname = "";
     ad->port = 8083;
 
     /* Create a thread */

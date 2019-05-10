@@ -3,6 +3,9 @@
 #include <sstream>
 #include <string>
 
+#define ACCELEROMETER 0
+#define GYROSCOPE 1
+
 //
 // This stores data from sensor with `C` channels for `D` seconds.
 // TODO: Preprocessing?
@@ -34,12 +37,37 @@ struct Measure {
     return _nextIdx;
   }
 
-  // Remove?
   std::string format()
   {
-    std::ostringstream oss;
-    std::cout << "{}";
-    return oss.str();
+    int numSample = _numSamples();
+    std::string sensor_type = "";
+
+    // Check the Measure type (accel or gyro)
+    switch (_type) {
+	    case ACCELEROMETER:
+	    	sensor_type = "accel";
+	    	break;
+	    case GYROSCOPE:
+	    	sensor_type = "gyro";
+	    	break;
+	    default:
+	    	break;
+	 }
+
+	 // JSON formatting
+	 std::string timestamps = std::to_string(timestamp);
+	 std::string data[C] = {"", "", ""}; // data[0] = "10.0, 5.0, 2.0, ..."
+
+	 for (unsigned int i = 0; i < C; i++) {
+	   for (int j = 0; j < numSample; j++) {
+	     data[i] += std::to_string(data[i][j]);
+	     if (j < numSample-1)
+	       data[i] += ",";
+	   }
+	 }
+
+	 std::string jsonObj = "{\"timestamps\":" + timestamps + ",\"" + sensor_type + "\":{\"x\":[" + data[0] + "],\"y\":[" + data[1] + "],\"z\":[" + data[2] + "]}}";
+	 return jsonObj;
   }
 
   std::vector<float> & operator[](std::size_t idx)
@@ -66,7 +94,7 @@ struct Measure {
       return;
 
     // Store data
-    for (int i = 0; i < _numChannels(); i++) {
+    for (unsigned int i = 0; i < _numChannels(); i++) {
       data[i][idx] = readValue[i];
     }
 
