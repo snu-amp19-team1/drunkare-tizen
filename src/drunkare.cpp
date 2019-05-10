@@ -19,7 +19,7 @@
 
 #define NUM_SENSORS 2
 #define NUM_CHANNELS 3
-#define DURATION 5 // seconds
+#define DURATION 60 // seconds
 #define ACCELEROMETER 0
 #define GYROSCOPE 1
 
@@ -266,12 +266,13 @@ create_base_gui(appdata_s *ad)
 
     /* Custom initializations are here! */
     ad->_isMeasuring = false;
-    ad->hostname = "http://localhost";
-    ad->port = 8000;
+    ad->hostname = "http://lynx.snu.ac.kr";
+    ad->port = 8083;
 
     /* Create a thread */
-    if (!pthread_create(&(ad->netWorker), NULL, netWorkerJob, ad))
-      dlog_print(DLOG_ERROR, LOG_TAG, "pthread_create() is failed.");
+    int error = pthread_create(&(ad->netWorker), NULL, netWorkerJob, ad);
+    if (error)
+      dlog_print(DLOG_ERROR, LOG_TAG, "pthread_create() is failed. err = %d", error);
 
     init_button(ad, btnClickedCb);
     sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
