@@ -141,7 +141,7 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
   // Check tMeasures deque
   if (ad->tMeasures[sensor_type].empty()) {
 	  ad->tMeasures[sensor_type].push_back(std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
-	  timestamp = event->timestamp;
+	  timestamp = (unsigned long long)time(NULL);
 	  ad->tMeasures[sensor_type].front()->setTimestamp(timestamp);
 	  dlog_print(DLOG_DEBUG, LOG_TAG, "[%d] tMeasure ( %d ) is created. timestamp = %lld", sensor_type, ad->_measureId[sensor_type]-1, timestamp);
   }
