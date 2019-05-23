@@ -5,6 +5,7 @@
 #include <thread>
 #include <memory>
 #include <curl/curl.h>
+#include <sstream>
 
 // Tizen libraries
 #include <sensor.h>
@@ -19,7 +20,7 @@
 
 #define NUM_SENSORS 2
 #define NUM_CHANNELS 3
-#define DURATION 60 // seconds
+#define DURATION 12 // seconds
 #define ACCELEROMETER 0
 #define GYROSCOPE 1
 
@@ -42,6 +43,9 @@ struct appdata_s {
   Queue<TMeasure> queue;
   std::string hostname;
   long port;
+  uint64_t nrSentSamples;
+  std::string username;
+  std::string url;
 
   appdata_s() : win(nullptr) {}
 };
@@ -73,14 +77,19 @@ static void *netWorkerJob(void* data) {
 
   while (true) {
     // Get Measure pointer
+    dlog_print(DLOG_ERROR, "RACE_HUNTER", "[+] Enter loop");
     auto tMeasure = ad->queue.dequeue();
-    if (!tMeasure)
+    if (!tMeasure) {
+      dlog_print(DLOG_ERROR, "RACE_HUNTER", "[-] tMeasure == nullptr");
       break;
+    }
+
+    dlog_print(DLOG_ERROR, "RACE_HUNTER", "");
 
     /* JSON formatting */
     std::string jsonObj = tMeasure->format();
-    std::string url = ad->hostname + ":" + std::to_string(ad->port) + "/data/";
-    dlog_print(DLOG_DEBUG, LOG_TAG, "%s", jsonObj.c_str());
+    std::string url = ad->hostname + ":" + std::to_string(ad->port) + "/" + ad->username;
+    elm_object_text_set(ad->label, url.c_str());
 
     /* Curl POST */
     curl_global_init(CURL_GLOBAL_ALL);
@@ -91,22 +100,25 @@ static void *netWorkerJob(void* data) {
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, "charsets: utf-8");
 
+    dlog_print(DLOG_ERROR, "RACE_HUNTER", "[-] curl_slist_append");
+
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonObj.c_str());
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcrp/0.1");
+    // curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcrp/0.1");
 
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        // Curl failed
-    	dlog_print(DLOG_ERROR, LOG_TAG, "netWorkerJob() is failed. err = %d", res);
-        //return;
+        dlog_print(DLOG_ERROR, "RACE_HUNTER", "[-] res != CURLE_OK?");
     	pthread_exit(NULL);
     }
 
     curl_easy_cleanup(curl);
+    dlog_print(DLOG_ERROR, "RACE_HUNTER", "[-] curl_easy_cleanup");
     curl_global_cleanup();
+    dlog_print(DLOG_ERROR, "RACE_HUNTER", "[-] curl_global_cleanup");
+    // usleep(3000);
   }
 
   return NULL;
@@ -143,7 +155,6 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
 	  ad->tMeasures[sensor_type].push_back(std::make_unique<TMeasure>(ad->_measureId[sensor_type]++, sensor_type));
 	  timestamp = (unsigned long long)time(NULL);
 	  ad->tMeasures[sensor_type].front()->setTimestamp(timestamp);
-	  dlog_print(DLOG_DEBUG, LOG_TAG, "[%d] tMeasure ( %d ) is created. timestamp = %lld", sensor_type, ad->_measureId[sensor_type]-1, timestamp);
   }
 
   // Tick (store values in Measure.data every periods)
@@ -151,7 +162,6 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
 
   // Check Measure->_done and enqueue
   if (ad->tMeasures[sensor_type].front()->_done) {
-    dlog_print(DLOG_DEBUG, LOG_TAG, "[%d] tMeasure ( %d ) is done.", sensor_type, ad->_measureId[sensor_type]-1);
     ad->queue.enqueue(std::move(ad->tMeasures[sensor_type].front()));
     ad->tMeasures[sensor_type].pop_front();
   }
@@ -159,7 +169,6 @@ void sensorCb(sensor_h sensor, sensor_event_s *event, void *user_data)
 
 static void startMeasurement(appdata_s *ad)
 {
-  dlog_print(DLOG_DEBUG, LOG_TAG, "START MEASUREMENT");
   for (int i = 0; i < NUM_SENSORS; i++) {
     sensor_listener_set_event_cb(ad->listners[i], ad->_deviceSamplingRate,
                                  sensorCb, ad);
@@ -174,7 +183,7 @@ static void stopMeasurement(appdata_s *ad)
     sensor_listener_stop(ad->listners[i]);
   }
   ad->_isMeasuring = false;
-  // ad->queue.forceDone();
+  ad->queue.forceDone();
 }
 
 static void btnClickedCb(void *data, Evas_Object *obj, void *event_info)
@@ -237,19 +246,24 @@ create_base_gui(appdata_s *ad)
 	/* Create an actual view of the base gui.
 	   Modify this part to change the view. */
 	ad->label = elm_label_add(ad->conform);
-	elm_object_text_set(ad->label, "<align=center>Hello Tizen</align>");
+        evas_object_move(ad->label, 0, 100);
 	evas_object_size_hint_weight_set(ad->label, EVAS_HINT_EXPAND, EVAS_HINT_EXPAND);
 	elm_object_content_set(ad->conform, ad->label);
 
     /* Custom initializations are here! */
     ad->_isMeasuring = false;
-    ad->hostname = "";
-    ad->port = 8083;
+    ad->hostname = "localhost";
+    ad->username = "anonymous";
+    ad->port = 8888;
+    ad->nrSentSamples = 0;
+    ad->url = ad->hostname + ":" + std::to_string(ad->port) + "/" + ad->username;
 
     /* Create a thread */
     int error = pthread_create(&(ad->netWorker), NULL, netWorkerJob, ad);
-    if (error)
-      dlog_print(DLOG_ERROR, LOG_TAG, "pthread_create() is failed. err = %d", error);
+    if (error) {
+      dlog_print(DLOG_ERROR, "RACE_HUNTER", "[-] pthread_create");
+      return;
+    }
 
     init_button(ad, btnClickedCb);
     sensor_get_default_sensor(SENSOR_ACCELEROMETER, &ad->sensors[ACCELEROMETER]);
